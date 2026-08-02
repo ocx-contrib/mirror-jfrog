@@ -1,0 +1,112 @@
+# Shared base for every spec in this repository (jfrog).
+#
+# NOT a spec: it has no name/target/source and is never loaded on its own.
+# Everything a package owns — name, target, source, assets, asset_type,
+# metadata, catalog, tests, versions, announce, annotations — stays in that
+# package's own mirror.yml.
+#
+# ⚠️ `extends:` is a SHALLOW merge of top-level keys. A spec that sets a key
+# below replaces that block OUTRIGHT — there is no per-key merge. `platforms:`
+# is where this bites: it carries BOTH the runner matrix and the container
+# legs, so a child that restates it to tweak one runner silently drops every
+# `containers:` entry. Nothing reds — the legs simply stop existing, and every
+# os.features claim in that spec goes back to being merely asserted. Restate
+# `platforms:` IN FULL or not at all.
+
+skip_prereleases: true
+cascade: true
+
+# `none`, carried deliberately from the flat layout this repo grew out of.
+#
+# `validate` WARNS on `none` + `cascade`, and the warning is real in general: a
+# re-publish of an already-mirrored version reuses the bare version tag, so the
+# prior manifest is orphaned and registry GC can reap a digest some consumer's
+# ocx.lock pins. What makes it tolerable here is that JFrog cuts each version
+# directory on releases.jfrog.io once and never re-cuts it, so a bare tag is
+# written once per version in the normal course; only a deliberate re-run of an
+# already-published version can orphan anything.
+#
+# The fleet rule is `date` (mirror-yq switched when it moved to this layout, on
+# the argument that nothing was published at the new coordinate yet — which is
+# equally true of ghcr.io/ocx-contrib/jfrog/jfrog-cli). Switching is a one-line
+# change and costs nothing until the first publish lands.
+build_timestamp: none
+
+# No `verify:` block. `github_asset_digest` is a github_release-source option and
+# this repo's only source is `url_index`; JFrog publishes no checksum manifest
+# alongside the binaries under /artifactory/jfrog-cli/v2-jf/, so there is no
+# `checksums_file` to wire either. Downloads are HTTPS from releases.jfrog.io.
+
+concurrency:
+  # Assets are single ~60 MB static Go binaries — no archive to re-extract, but
+  # an order of magnitude larger than a 10 MB CLI, so the download fan-out stays
+  # modest and the upstream rate limit gets a wider gap than the fleet default.
+  max_downloads: 4
+  max_bundles: 2
+  max_pushes: 2
+  rate_limit_ms: 200
+  max_retries: 3
+  compression_threads: 0
+
+# `off`, and it cannot be otherwise here. The scan only looks BELOW an interface
+# PATH entry of the form ${installPath}/<dir>, and a raw-binary mirror has none —
+# the executable IS the content root, so PATH is a bare ${installPath}. `auto` or
+# `verify` is rejected at spec load with exit 65 ("bin_scan is enabled but …
+# declares no interface-visible ${installPath}/<dir> PATH entry"). `off` with a
+# hand-listed `binaries` in metadata.json is the blessed shape for
+# `asset_type: binary`. A future package here shipping an archive with a bin/
+# dir should override this to `verify`.
+bin_scan: off
+
+# ─── Platform matrix ────────────────────────────────────────────────────────
+#
+# `os.features` states what an artifact REQUIRES OF THE HOST — it is not a label
+# for how it was built. JFrog CLI is a pure-Go build: measured on 2.117.0, both
+# Linux binaries are fully static, no PT_INTERP and no DT_NEEDED (evidence above
+# jfrog-cli/mirror.yml's `assets:`), and upstream publishes no musl/glibc split
+# to choose between. So both Linux keys are BARE. Tagging them `+libc.musl`
+# would be a false requirement that hid them from every glibc host.
+#
+# A bare key claims universality, so it must prove it: ubuntu (glibc) + alpine
+# (musl) + fedora (different glibc vintage). The alpine leg IS the proof — drop
+# it and the universal claim is merely asserted.
+#
+# A future package here whose libc measurement differs must restate this whole
+# block in its own spec — see the shallow-merge warning at the top.
+platforms:
+  linux/amd64:
+    runner: ubuntu-latest
+    containers:
+      - { image: "ubuntu:24.04", shell: bash }
+      - { image: "alpine:3.20",  shell: sh }
+      - { image: "fedora:40",    shell: bash }
+  linux/arm64:
+    # arm64 container legs run natively — no qemu — so the runner arch must
+    # match the platform or the renderer reds the leg up front.
+    runner: ubuntu-24.04-arm
+    containers:
+      - { image: "ubuntu:24.04", shell: bash }
+      - { image: "alpine:3.20",  shell: sh }
+      - { image: "fedora:40",    shell: bash }
+  darwin/amd64:
+    # Intel slice tested on the arm64 macos-14 runner via Rosetta 2 — GitHub's
+    # native macos-13 Intel pool is exhausted and deadlocks the push job.
+    runner: macos-14
+    prefix: ["arch", "-x86_64"]
+  darwin/arm64:
+    runner: macos-14
+    shell: bash
+  windows/amd64:
+    runner: windows-latest
+    shell: pwsh
+  # No `containers:` on darwin or windows — those runners have no Linux
+  # container engine, and the key is rejected at spec load.
+  #
+  # No `windows/arm64`: the upstream version directory holds exactly one Windows
+  # build, `jfrog-cli-windows-amd64/`. There is no aarch64 Windows `jf.exe` to
+  # mirror.
+
+notify:
+  discord:
+    webhook_secret: OCX_MIRROR_DISCORD_HOOK
+    user_id: "227748867204972545"  # pinged in-message on failures

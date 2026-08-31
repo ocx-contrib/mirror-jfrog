@@ -6,6 +6,6 @@
 # a single version. Namespaced coordinate only: the flat `ocx.sh/uv` dies with
 # the `ocx.sh` host.
 [tools]
-cli = "ocx.sh/ocx/cli:0.5"
-mirror = "ocx.sh/ocx/mirror:0.5"
+cli = "ocx.sh/ocx/cli:0.6"
+mirror = "ocx.sh/ocx/mirror:0.6"
 uv = "ocx.sh/astral-sh/uv:0"
